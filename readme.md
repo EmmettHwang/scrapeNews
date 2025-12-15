@@ -1,6 +1,14 @@
 ## 프로그램 개발 순서 
-<img width="728" height="265" alt="image" src="https://github.com/user-attachments/assets/cd8da887-e1be-4ab8-9353-5dd0031c9782" />
-순서의 차이는 있으나 제일 중요하다고 보는것이 의외로 hello 인점
+💡 추천하는 개발 순서 요약
+1. Idea 및 브레인스토밍
+2. 가상환경 세팅 & Hello World 찍기 (기반 다지기)
+3. 스크래핑 코드 작성 (데이터 확보)
+4. DB 모델링 및 데이터 저장 구현 (데이터 영구 저장)
+5. HTML 화면 개발 (시각화)
+
+6. 텔레그램 봇 메시지 발송
+7. 카카오 채널에 발송하기 
+
 
 ## 프로그램 실행 방법
 FastAPI 프로그램(main.py)을 단순히 python main.py로 실행하지 않고 **uvicorn**이라는 명령어로 실행하는 이유와 방법을 요약해 드립니다.
