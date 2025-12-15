@@ -1,3 +1,7 @@
+## 프로그램 개발 순서 
+<img width="728" height="265" alt="image" src="https://github.com/user-attachments/assets/cd8da887-e1be-4ab8-9353-5dd0031c9782" />
+순서의 차이는 있으나 제일 중요하다고 보는것이 의외로 hello 인점
+
 ## 프로그램 실행 방법
 FastAPI 프로그램(main.py)을 단순히 python main.py로 실행하지 않고 **uvicorn**이라는 명령어로 실행하는 이유와 방법을 요약해 드립니다.
 
@@ -28,4 +32,6 @@ FastAPI 프로그램(main.py)을 단순히 python main.py로 실행하지 않고
    app: main.py 코드 안에서 만든 FastAPI 객체 변수 이름 (app = FastAPI()).   
 
    --reload: (개발용 옵션) 코드를 수정하고 저장(Ctrl+S)하면, 서버를 자동으로 재시작하라는 뜻. 
-   (실제 서비스 배포 시에는 뺍니다.)   
+   (실제 서비스 배포 시에는 뺍니다.)
+
+   
