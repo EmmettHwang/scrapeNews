@@ -1,0 +1,21 @@
+# DB 연결
+            conn = pymysql.connect( 
+                host='bitnmeta2.synology.me',
+                user='iyrc',
+                passwd='Dodan1004!',
+                db='gemini_ai',
+                charset='utf8',
+                port=3307,  
+                cursorclass=pymysql.cursors.DictCursor
+            )
+
+# Table 생성 (완료 되었음)
+CREATE TABLE ai_news (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    link VARCHAR(500) NOT NULL UNIQUE, -- URL 길이를 고려해 500으로 설정
+    summary TEXT,
+    published_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
