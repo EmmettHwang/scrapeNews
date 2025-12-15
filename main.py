@@ -15,7 +15,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 
-# 2. AI 설정 (중요: 모델명 수정됨 gemini-1.5-flash)
+# 2. AI 설정
 genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash')
 
@@ -37,7 +37,7 @@ DB_CONFIG = {
 TREND_FILE = "latest_trend.txt"
 
 # ---------------------------------------------------------
-# [기능 1] DB 도우미 함수들
+# [기능 1] DB 및 텔레그램 도우미 함수들
 # ---------------------------------------------------------
 def is_link_exist(link):
     conn = None
@@ -65,16 +65,23 @@ def save_news(title, link, summary):
         if conn: conn.close()
 
 def send_telegram_message(text):
-    # 아직 미처리 되었음 TELEGRAM_TOKEN 이 없으면 패스
-    if not TELEGRAM_TOKEN:
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️ 텔레그램 설정(토큰/ID)이 누락되었습니다.")
         return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID, 
+        "text": text, 
+        "parse_mode": "HTML" # HTML 태그 사용 가능
+    }
+
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-            data={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
-        )
-    except:
-        pass
+        response = requests.post(url, data=payload, timeout=10)
+        if response.status_code != 200:
+            print(f"❌ 텔레그램 전송 실패: {response.text}")
+    except Exception as e:
+        print(f"❌ 텔레그램 연결 에러: {e}")
 
 # ---------------------------------------------------------
 # [기능 2] AI 요약 및 분석 함수
@@ -86,7 +93,7 @@ def summarize_news_with_ai(title, content):
         
         [규칙]
         1. 본문 내용이 부족하면 '제목'을 보고 내용을 추론해서 작성할 것.
-        2. '- ' 글머리 기호를 사용해 5~7줄 내외로 작성.
+        2. '- ' 글머리 기호를 사용해 3줄 내외로 핵심만 작성.
         
         [제목]: {title}
         [내용]: {content}
@@ -99,16 +106,31 @@ def summarize_news_with_ai(title, content):
 
 def generate_trend_analysis(news_data_list):
     try:
+        # 뉴스 제목 리스트 생성
         combined_titles = "\n".join([f"- {news['title']}" for news in news_data_list])
+        
+        # [수정] 텔레그램 브리핑용 프롬프트 최적화
         prompt = f"""
-        아래는 오늘 수집된 주요 AI 관련 뉴스 10개의 제목들이다.
-        이 뉴스들을 바탕으로 '오늘의 AI 산업 동향'을 종합적으로 분석해줘.
-        
+        아래는 현재 수집된 주요 AI 관련 뉴스 제목들이다. (총 {len(news_data_list)}건)
+        이 뉴스들을 바탕으로 'AI 산업 뉴스 브리핑'을 작성해줘. 
+        뉴스가 10개 미만이어도 있는 정보만으로 분석해라.
+
         [작성 규칙]
-        1. 전체적인 트렌드나 공통된 키워드를 찾아서 설명할 것.
-        2. '오늘의 핵심 키워드: OOO, OOO' 형식을 포함할 것.
-        3. 서술형으로 5줄 내외로 요약할 것.
+        1. 텔레그램 메시지로 보낼 것이므로 가독성 좋게 작성할 것.
+        2. HTML 태그 <b> (볼드체)만 사용 가능 (마크다운 ** 사용 금지).
+        3. 아래 형식을 반드시 따를 것:
+
+        <b>[📅 오늘의 AI 뉴스 브리핑]</b>
         
+        <b>1. 핵심 키워드</b>
+        : (키워드 3개 추출)
+
+        <b>2. 주요 동향 요약</b>
+        : (전체적인 흐름을 3~5줄로 요약)
+
+        <b>3. 주요 헤드라인</b>
+        : (가장 중요한 뉴스 제목 3개만 나열)
+
         [뉴스 목록]:
         {combined_titles}
         """
@@ -119,7 +141,7 @@ def generate_trend_analysis(news_data_list):
         return "종합 분석을 생성하지 못했습니다."
 
 # ---------------------------------------------------------
-# [기능 3] 메인 로직 (스크래핑 -> 요약 -> DB -> 텔레그램 -> 종합분석)
+# [기능 3] 메인 로직 (스크래핑 -> 요약 -> DB -> 종합분석 -> 텔레그램 1회 전송)
 # ---------------------------------------------------------
 def scrape_and_process():
     url = "https://news.google.com/rss/search?q=AI+인공지능&hl=ko&gl=KR&ceid=KR:ko"
@@ -133,8 +155,10 @@ def scrape_and_process():
         processed_list = []
         new_count = 0
         
-        # 10개 처리
-        for item in items[:10]:
+        # 최대 10개까지만 처리 (10개 미만이면 있는 만큼만 반복됨)
+        target_items = items[:10]
+        
+        for item in target_items:
             title = item.title.text
             link = item.link.text
             raw_desc = item.description.text if item.description else ""
@@ -143,33 +167,42 @@ def scrape_and_process():
             soup_desc = BeautifulSoup(raw_desc, "html.parser")
             cleaned_text = soup_desc.get_text(separator=" ", strip=True)
             
-            # 중복 체크
-            if is_link_exist(link):
-                print(f"PASS: {title[:10]}...")
-                processed_list.append({'title': title}) 
-                continue
+            # 리스트에 추가 (분석용) - 중복이어도 트렌드 분석에는 포함
+            processed_list.append({'title': title}) 
 
-            # AI 요약
+            # DB 중복 체크
+            if is_link_exist(link):
+                print(f"PASS (중복): {title[:10]}...")
+                continue # 중복이면 DB 저장 및 개별 처리는 건너뜀
+
+            # AI 요약 (DB 저장용)
             context = cleaned_text if len(cleaned_text) > 10 else f"본문 내용 없음. 제목({title}) 기반으로 분석 필요."
             summary = summarize_news_with_ai(title, context)
             
-            # DB 저장 및 텔레그램 전송
+            # DB 저장
             save_news(title, link, summary)
             new_count += 1
-            processed_list.append({'title': title})
             
-            msg = f"<b>📰 {title}</b>\n\n{summary}\n\n🔗 <a href='{link}'>원문 보기</a>"
-            send_telegram_message(msg)
-            
-            print(f"✅ 처리 완료: {title[:10]}...")
+            # [수정] 개별 텔레그램 전송 코드 삭제됨
+            print(f"✅ DB 저장 완료: {title[:10]}...")
             time.sleep(1)
 
-        # 종합 분석
+        # -----------------------------------------------------
+        # [수정] 모든 처리가 끝난 후 종합 브리핑 1회 발송
+        # -----------------------------------------------------
         if processed_list:
-            print("📊 종합 트렌드 분석 중...")
+            print(f"📊 총 {len(processed_list)}건의 뉴스로 트렌드 분석 중...")
             trend_report = generate_trend_analysis(processed_list)
+            
+            # 파일 저장
             with open(TREND_FILE, "w", encoding="utf-8") as f:
                 f.write(trend_report)
+            
+            # 텔레그램 전송 (종합 리포트 1회)
+            send_telegram_message(trend_report)
+            print("📨 텔레그램 종합 브리핑 전송 완료")
+        else:
+            print("⚠️ 처리할 뉴스가 없습니다.")
                 
         return new_count
         
@@ -198,7 +231,8 @@ def read_root(request: Request):
     if os.path.exists(TREND_FILE):
         with open(TREND_FILE, "r", encoding="utf-8") as f:
             trend_report = f.read()
-
+    
+    # 웹 화면에서는 줄바꿈 처리를 위해 replace 적용
     return templates.TemplateResponse("index.html", {
         "request": request, 
         "news_list": news_list,
@@ -209,4 +243,4 @@ def read_root(request: Request):
 def trigger_scrape():
     print("🔔 /scrape 요청 받음")
     count = scrape_and_process()
-    return {"status": "success", "message": f"{count}건 신규 수집 및 종합 분석 완료!"}
+    return {"status": "success", "message": f"{count}건 신규 수집. 종합 브리핑 전송 완료!"}
