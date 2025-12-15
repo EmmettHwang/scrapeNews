@@ -9,107 +9,166 @@
     <style>
         body { font-family: 'Noto Sans KR', sans-serif; background-color: #f4f6f9; }
         .card { border: none; border-radius: 12px; transition: 0.3s; }
-        .card:hover { transform: translateY(-5px); }
-        .summary-box { background-color: #f1f8ff; border-left: 5px solid #0d6efd; padding: 20px; border-radius: 8px; margin-top: 15px; }
-        /* 종합 분석 박스 스타일 (강조) */
+        .card:hover { transform: translateY(-3px); }
+        .summary-box { background-color: #f8f9fa; border-left: 4px solid #0d6efd; padding: 15px; border-radius: 5px; margin-top: 10px; font-size: 0.95rem; }
+        
+        /* 종합 분석 박스 */
         .trend-box { 
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
             color: white; 
             padding: 30px; 
             border-radius: 15px; 
-            margin-top: 50px;
-            margin-bottom: 50px;
+            margin-bottom: 40px; 
             box-shadow: 0 10px 20px rgba(0,0,0,0.2);
         }
         .trend-content { white-space: pre-wrap; font-size: 1.1rem; line-height: 1.8; }
+
+        /* 섹션 헤더 스타일 */
+        .time-section-header {
+            display: flex;
+            align-items: center;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            color: #495057;
+            font-weight: bold;
+            font-size: 1.3rem;
+        }
+        .time-section-header::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 25px;
+            background-color: #6c757d;
+            margin-right: 10px;
+            border-radius: 3px;
+        }
+        /* 최신 뉴스 헤더 강조 */
+        .header-latest::before { background-color: #dc3545; } /* 빨간색 */
+        .header-1h::before { background-color: #fd7e14; } /* 주황색 */
+        .header-6h::before { background-color: #ffc107; } /* 노란색 */
+        
+        .badge-new { background-color: #dc3545; color: white; padding: 3px 8px; border-radius: 5px; font-size: 0.7rem; vertical-align: middle; margin-bottom: 2px; }
     </style>
 </head>
 <body class="bg-light">
 
     <div class="container py-5" style="max-width: 900px;">
-        <div class="d-flex justify-content-between align-items-center mb-5">
-            <div>
+        
+        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap">
+            <div class="mb-2">
                 <h1 class="fw-bold">🤖 AI 뉴스 인사이트</h1>
-                <p class="text-muted mb-0">Google News 기반 실시간 분석</p>
+                <p class="text-muted mb-0">Google News 기반 실시간 타임라인 분석</p>
             </div>
-            <button onclick="runScrape()" id="scrapeBtn" class="btn btn-dark px-4 py-2 fw-bold shadow-sm">
-                <span id="btnText">🔄 뉴스 수집 & 분석 시작</span>
-                <span id="spinner" class="spinner-border spinner-border-sm d-none"></span>
-            </button>
-        </div>
-        <div style="background-color: #f0f0f0; padding: 20px; margin-bottom: 20px; border-radius: 10px;">
-            <h3>📬 AI 뉴스 무료 구독하기</h3>
-            <p>텔레그램으로 매일 아침 AI 트렌드 요약을 보내드립니다.</p>
-            
-            <form action="/subscribe" method="post">
-                <label>닉네임: <input type="text" name="nickname" required placeholder="홍길동"></label>
-                <label>텔레그램 Chat ID: <input type="text" name="chat_id" required placeholder="숫자 ID 입력"></label>
-                <button type="submit" style="background-color: #0088cc; color: white; border: none; padding: 5px 10px; cursor: pointer;">구독 신청</button>
-            </form>
-            
-            <p style="font-size: 0.8em; color: #666;">
-                ※ <b>주의사항:</b> 반드시 먼저 텔레그램 봇에게 말을 걸어야 메시지를 받을 수 있습니다.<br>
-                1. 대부분의 사람들은 자진의 chat ID를 몰라요 <br>
-                2. 텔레그램에서 내 봇 검색 후 <b>/start</b> 누르기<br>
-                3. <b>@userinfobot</b> 등을 통해 내 Chat ID(숫자) 알아내기
-            </p>
+            <div class="d-flex gap-2">
+                <select id="limitSelect" class="form-select w-auto fw-bold shadow-sm" onchange="changeLimit()">
+                    <option value="10" {% if current_limit == '10' %}selected{% endif %}>10개 보기</option>
+                    <option value="50" {% if current_limit == '50' %}selected{% endif %}>50개 보기</option>
+                    <option value="100" {% if current_limit == '100' %}selected{% endif %}>100개 보기</option>
+                    <option value="all" {% if current_limit == 'all' %}selected{% endif %}>모두 보기</option>
+                </select>
+
+                <button onclick="runScrape()" id="scrapeBtn" class="btn btn-dark px-4 fw-bold shadow-sm">
+                    <span id="btnText">🔄 분석 시작</span>
+                    <span id="spinner" class="spinner-border spinner-border-sm d-none"></span>
+                </button>
+            </div>
         </div>
 
-        <div class="row" id="newsContainer">
-            {% for news in news_list %}
-            <div class="col-12 mb-4">
-                <div class="card shadow-sm">
-                    <div class="card-body p-4">
-                        <small class="text-secondary">📅 {{ news.created_at }}</small>
-                        <h3 class="card-title mt-2 fw-bold">{{ news.title }}</h3>
-                        
-                        <div class="summary-box">
-                            <div style="white-space: pre-wrap;">{{ news.summary | safe }}</div>
-                        </div>
-                        
-                        <div class="mt-3 text-end">
-                            <a href="{{ news.link }}" target="_blank" class="btn btn-outline-primary btn-sm rounded-pill px-3">
-                                📄 원문 기사 읽기
-                            </a>
-                        </div>
-                    </div>
-                </div>
+        <div class="card mb-4 bg-white shadow-sm">
+            <div class="card-body bg-light rounded">
+                <h6 class="fw-bold">📬 텔레그램 무료 구독</h6>
+                <form action="/subscribe" method="post" class="d-flex gap-2 align-items-center mt-2">
+                    <input type="text" name="nickname" class="form-control form-control-sm" style="max-width: 120px;" required placeholder="닉네임">
+                    <input type="text" name="chat_id" class="form-control form-control-sm" style="max-width: 150px;" required placeholder="Chat ID">
+                    <button type="submit" class="btn btn-primary btn-sm text-nowrap">신청</button>
+                    <span class="text-muted ms-2" style="font-size: 0.75rem;">(*봇에게 /start 먼저 필수)</span>
+                </form>
             </div>
-            {% endfor %}
         </div>
 
         <div class="trend-box">
-            <h2 class="fw-bold mb-4">📊 오늘의 AI 산업 종합 브리핑</h2>
-            <div class="trend-content">
-                {{ trend_report | safe }}
-            </div>
-            <div class="mt-3 text-white-50 text-end">
-                * 수집된 상위 10개 뉴스를 바탕으로 AI가 생성한 보고서입니다.
-            </div>
+            <h2 class="fw-bold mb-3">📊 AI 산업 종합 브리핑</h2>
+            <div class="trend-content">{{ trend_report | safe }}</div>
         </div>
+
+        {% macro render_news_list(news_list, show_summary=True) %}
+            <div class="row">
+            {% if news_list %}
+                {% for news in news_list %}
+                <div class="col-12 mb-3">
+                    <div class="card shadow-sm">
+                        <div class="card-body p-3">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <small class="text-secondary">📅 {{ news.created_at }}</small>
+                                    <h5 class="card-title mt-1 fw-bold">
+                                        <a href="{{ news.link }}" target="_blank" class="text-decoration-none text-dark">{{ news.title }}</a>
+                                    </h5>
+                                </div>
+                                <a href="{{ news.link }}" target="_blank" class="btn btn-sm btn-outline-secondary align-self-start ms-2">Link</a>
+                            </div>
+                            {% if show_summary %}
+                            <div class="summary-box">
+                                {{ news.summary | safe }}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="col-12"><p class="text-muted ms-3">해당 구간의 뉴스가 없습니다.</p></div>
+            {% endif %}
+            </div>
+        {% endmacro %}
+
+        <div class="time-section-header header-latest">
+            🚀 방금 수집된 뉴스 (1시간 이내) <span class="badge badge-new ms-2">HOT</span>
+        </div>
+        {{ render_news_list(news_sections['latest'], show_summary=True) }}
+
+        <div class="time-section-header header-1h">🕐 1시간 ~ 6시간 전</div>
+        {{ render_news_list(news_sections['1h'], show_summary=True) }}
+
+        <div class="time-section-header header-6h">🕕 6시간 ~ 12시간 전</div>
+        {{ render_news_list(news_sections['6h'], show_summary=False) }}
+
+        <div class="time-section-header">🕛 12시간 ~ 24시간 전</div>
+        {{ render_news_list(news_sections['12h'], show_summary=False) }}
+
+        <div class="time-section-header">🗄️ 24시간 이전 (지난 뉴스)</div>
+        {{ render_news_list(news_sections['older'], show_summary=False) }}
 
     </div>
 
     <script>
+        // 드롭다운 변경 시 페이지 이동
+        function changeLimit() {
+            const limit = document.getElementById('limitSelect').value;
+            window.location.href = `/?limit=${limit}`;
+        }
+
         async function runScrape() {
+            if(!confirm("최신 뉴스를 수집합니다. (약 15초 소요)")) return;
+            
             const btn = document.getElementById('scrapeBtn');
             const btnText = document.getElementById('btnText');
             const spinner = document.getElementById('spinner');
 
-            if(!confirm("뉴스를 수집하고 분석하는 데 약 10~20초가 소요됩니다. 진행하시겠습니까?")) return;
-
             btn.disabled = true;
-            btnText.innerText = "데이터 분석 중...";
+            btnText.innerText = "분석 중...";
             spinner.classList.remove('d-none');
 
             try {
                 const response = await fetch('/scrape');
                 const result = await response.json();
                 alert(result.message);
-                location.reload(); 
+                
+                // 새로고침 시 현재 limit 유지
+                const currentLimit = document.getElementById('limitSelect').value;
+                window.location.href = `/?limit=${currentLimit}`;
             } catch (error) {
-                alert("오류 발생");
-            } finally {
+                alert("오류 발생: " + error);
                 btn.disabled = false;
                 spinner.classList.add('d-none');
             }

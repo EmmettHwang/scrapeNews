@@ -8,6 +8,8 @@ import google.generativeai as genai
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from datetime import datetime, timedelta
+
 
 # 1. 환경변수 로드
 load_dotenv()
@@ -275,14 +277,54 @@ def scrape_and_process():
 # API 엔드포인트
 # ---------------------------------------------------------
 @app.get("/")
-def read_root(request: Request):
+def read_root(request: Request, limit: str = "10"): # limit 파라미터 추가 (기본값 10)
     conn = None
-    news_list = []
+    
+    # 시간대별 뉴스 담을 딕셔너리 초기화
+    news_sections = {
+        "latest": [], # 1시간 이내 (방금 수집)
+        "1h": [],     # 1 ~ 6시간
+        "6h": [],     # 6 ~ 12시간
+        "12h": [],    # 12 ~ 24시간
+        "older": []   # 24시간 이후
+    }
+    
     try:
         conn = pymysql.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM ai_news ORDER BY id DESC LIMIT 10")
-        news_list = cursor.fetchall()
+
+        # limit이 'all'이면 충분히 큰 숫자로 설정, 아니면 정수로 변환
+        query_limit = 1000 if limit == "all" else int(limit)
+        
+        # 전체 뉴스 가져오기 (최신순)
+        cursor.execute("SELECT * FROM ai_news ORDER BY id DESC LIMIT %s", (query_limit,))
+        all_news = cursor.fetchall()
+
+        # Python에서 시간대별 분류 작업 수행
+        now = datetime.now()
+        
+        for news in all_news:
+            # created_at이 문자열인 경우 datetime으로 변환 (환경에 따라 다를 수 있음)
+            # 보통 pymysql은 datetime 객체로 반환함
+            created_at = news['created_at']
+            if isinstance(created_at, str):
+                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                
+            diff = now - created_at
+            seconds = diff.total_seconds()
+            hours = seconds / 3600
+
+            if hours < 1:
+                news_sections["latest"].append(news)
+            elif 1 <= hours < 6:
+                news_sections["1h"].append(news)
+            elif 6 <= hours < 12:
+                news_sections["6h"].append(news)
+            elif 12 <= hours < 24:
+                news_sections["12h"].append(news)
+            else:
+                news_sections["older"].append(news)
+
     except Exception as e:
         print(f"DB Read Error: {e}")
     finally:
@@ -295,8 +337,9 @@ def read_root(request: Request):
     
     return templates.TemplateResponse("index.html", {
         "request": request, 
-        "news_list": news_list,
-        "trend_report": trend_report
+        "trend_report": trend_report,
+        "news_sections": news_sections, # 분류된 뉴스 전달
+        "current_limit": limit          # 현재 선택된 보기 옵션 유지
     })
 
 @app.get("/scrape")
