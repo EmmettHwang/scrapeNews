@@ -3,16 +3,17 @@ import requests
 import os
 import time
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Request
-from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 import google.generativeai as genai
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import RedirectResponse
+from fastapi.templating import Jinja2Templates
 
 # 1. 환경변수 로드
 load_dotenv()
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID') # 관리자 테스트용
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 
 # 2. AI 설정
@@ -64,6 +65,7 @@ def save_news(title, link, summary):
     finally:
         if conn: conn.close()
 
+# (단일 발송용 - 관리자 테스트 등)
 def send_telegram_message(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ 텔레그램 설정(토큰/ID)이 누락되었습니다.")
@@ -73,7 +75,7 @@ def send_telegram_message(text):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID, 
         "text": text, 
-        "parse_mode": "HTML" # HTML 태그 사용 가능
+        "parse_mode": "HTML"
     }
 
     try:
@@ -82,6 +84,50 @@ def send_telegram_message(text):
             print(f"❌ 텔레그램 전송 실패: {response.text}")
     except Exception as e:
         print(f"❌ 텔레그램 연결 에러: {e}")
+
+# (구독자 전체 발송용)
+def send_telegram_to_all(text):
+    if not TELEGRAM_TOKEN:
+        print("⚠️ 텔레그램 토큰이 없습니다.")
+        return
+
+    conn = None
+    try:
+        # 1. 구독자 목록 가져오기
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("SELECT nickname, chat_id FROM subscribers")
+        subscribers = cursor.fetchall()
+        
+        if not subscribers:
+            print("⚠️ 발송할 구독자가 없습니다.")
+            return
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+        # 2. 한 명씩 순서대로 전송
+        print(f"📨 총 {len(subscribers)}명에게 발송 시작...")
+        
+        for sub in subscribers:
+            chat_id = sub['chat_id']
+            payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+            
+            try:
+                resp = requests.post(url, data=payload, timeout=5)
+                if resp.status_code == 200:
+                    print(f" - {sub['nickname']}님 전송 성공")
+                else:
+                    print(f" - {sub['nickname']}님 전송 실패: {resp.text}")
+            except Exception as e:
+                print(f" - 전송 에러 ({sub['nickname']}): {e}")
+            
+            # 너무 빨리 보내면 텔레그램이 차단할 수 있으므로 약간 대기
+            time.sleep(0.5)
+
+    except Exception as e:
+        print(f"DB 접속 에러: {e}")
+    finally:
+        if conn: conn.close()
 
 # ---------------------------------------------------------
 # [기능 2] AI 요약 및 분석 함수
@@ -109,7 +155,6 @@ def generate_trend_analysis(news_data_list):
         # 뉴스 제목 리스트 생성
         combined_titles = "\n".join([f"- {news['title']}" for news in news_data_list])
         
-        # [수정] 텔레그램 브리핑용 프롬프트 최적화
         prompt = f"""
         아래는 현재 수집된 주요 AI 관련 뉴스 제목들이다. (총 {len(news_data_list)}건)
         이 뉴스들을 바탕으로 'AI 산업 뉴스 브리핑'을 작성해줘. 
@@ -141,7 +186,7 @@ def generate_trend_analysis(news_data_list):
         return "종합 분석을 생성하지 못했습니다."
 
 # ---------------------------------------------------------
-# [기능 3] 메인 로직 (스크래핑 -> 요약 -> DB -> 종합분석 -> 텔레그램 1회 전송)
+# [기능 3] 메인 로직 (스크래핑 -> 요약 -> DB -> 종합분석 -> 구독자 전원 전송)
 # ---------------------------------------------------------
 def scrape_and_process():
     url = "https://news.google.com/rss/search?q=AI+인공지능&hl=ko&gl=KR&ceid=KR:ko"
@@ -155,7 +200,7 @@ def scrape_and_process():
         processed_list = []
         new_count = 0
         
-        # 최대 10개까지만 처리 (10개 미만이면 있는 만큼만 반복됨)
+        # 최대 10개까지만 처리
         target_items = items[:10]
         
         for item in target_items:
@@ -167,15 +212,15 @@ def scrape_and_process():
             soup_desc = BeautifulSoup(raw_desc, "html.parser")
             cleaned_text = soup_desc.get_text(separator=" ", strip=True)
             
-            # 리스트에 추가 (분석용) - 중복이어도 트렌드 분석에는 포함
+            # 리스트에 추가 (분석용)
             processed_list.append({'title': title}) 
 
             # DB 중복 체크
             if is_link_exist(link):
                 print(f"PASS (중복): {title[:10]}...")
-                continue # 중복이면 DB 저장 및 개별 처리는 건너뜀
+                continue 
 
-            # AI 요약 (DB 저장용)
+            # AI 요약
             context = cleaned_text if len(cleaned_text) > 10 else f"본문 내용 없음. 제목({title}) 기반으로 분석 필요."
             summary = summarize_news_with_ai(title, context)
             
@@ -183,12 +228,11 @@ def scrape_and_process():
             save_news(title, link, summary)
             new_count += 1
             
-            # [수정] 개별 텔레그램 전송 코드 삭제됨
             print(f"✅ DB 저장 완료: {title[:10]}...")
             time.sleep(1)
 
         # -----------------------------------------------------
-        # [수정] 모든 처리가 끝난 후 종합 브리핑 1회 발송
+        # [핵심] 종합 브리핑 구독자 전체 발송
         # -----------------------------------------------------
         if processed_list:
             print(f"📊 총 {len(processed_list)}건의 뉴스로 트렌드 분석 중...")
@@ -198,14 +242,14 @@ def scrape_and_process():
             with open(TREND_FILE, "w", encoding="utf-8") as f:
                 f.write(trend_report)
             
-            # 텔레그램 전송 (종합 리포트 1회)
-            send_telegram_message(trend_report)
+            # 텔레그램 전송 (구독자 전원에게)
+            # [수정됨: 괄호 닫기 완료]
+            send_telegram_to_all(trend_report)
             print("📨 텔레그램 종합 브리핑 전송 완료")
         else:
             print("⚠️ 처리할 뉴스가 없습니다.")
                 
-        return new_count
-        
+        return new_count        
     except Exception as e:
         print(f"❌ 전체 프로세스 에러: {e}")
         return 0
@@ -232,7 +276,6 @@ def read_root(request: Request):
         with open(TREND_FILE, "r", encoding="utf-8") as f:
             trend_report = f.read()
     
-    # 웹 화면에서는 줄바꿈 처리를 위해 replace 적용
     return templates.TemplateResponse("index.html", {
         "request": request, 
         "news_list": news_list,
@@ -243,4 +286,29 @@ def read_root(request: Request):
 def trigger_scrape():
     print("🔔 /scrape 요청 받음")
     count = scrape_and_process()
-    return {"status": "success", "message": f"{count}건 신규 수집. 종합 브리핑 전송 완료!"}
+    return {"status": "success", "message": f"{count}건 신규 수집 및 구독자 발송 완료!"}
+
+# ---------------------------------------------------------
+# [기능 추가] 구독 신청 API
+# ---------------------------------------------------------
+@app.post("/subscribe")
+def subscribe_user(nickname: str = Form(...), chat_id: str = Form(...)):
+    conn = None
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        # 중복 방지 (이미 등록된 Chat ID면 무시)
+        # DB에 subscribers 테이블이 생성되어 있어야 함
+        sql = "INSERT IGNORE INTO subscribers (nickname, chat_id) VALUES (%s, %s)"
+        cursor.execute(sql, (nickname, chat_id))
+        conn.commit()
+        
+        print(f"🔔 신규 구독자 등록: {nickname} ({chat_id})")
+    except Exception as e:
+        print(f"구독 에러: {e}")
+    finally:
+        if conn: conn.close()
+    
+    # 등록 후 다시 메인 페이지로 이동
+    return RedirectResponse(url="/", status_code=303)
