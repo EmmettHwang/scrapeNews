@@ -134,21 +134,44 @@ def send_telegram_to_all(text):
 # ---------------------------------------------------------
 def summarize_news_with_ai(title, content):
     try:
+        # 내용이 너무 짧으면 제목을 내용으로 사용
+        if len(content) < 20:
+            actual_content = f"제목: {title}"
+        else:
+            actual_content = content
+
         prompt = f"""
-        너는 IT 뉴스 전문 분석가야. 아래 기사를 한국어로 상세히 요약해줘.
+        너는 IT 뉴스 브리핑 봇이야. 아래 뉴스에 대해 한국어로 2~3줄 요약을 작성해.
         
-        [규칙]
-        1. 본문 내용이 부족하면 '제목'을 보고 내용을 추론해서 작성할 것.
-        2. '- ' 글머리 기호를 사용해 3줄 내외로 핵심만 작성.
+        [지침]
+        1. '내용'이 충분하지 않거나 비어있다면, '제목'만 보고 어떤 뉴스인지 추론해서 작성해.
+        2. 절대 '내용을 분석할 수 없습니다'라고 말하지 마.
+        3. 문장은 "~함", "~임", "~것으로 보임" 같은 명사형 어미로 끝내.
         
         [제목]: {title}
-        [내용]: {content}
+        [내용]: {actual_content}
         """
-        response = model.generate_content(prompt)
-        return response.text
+        
+        # 안전 설정 (필터링 기준을 낮춰서 뉴스가 차단되지 않게 함)
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
+
+        response = model.generate_content(prompt, safety_settings=safety_settings)
+        
+        # 응답 텍스트가 있는지 확인
+        if response.text:
+            return response.text
+        else:
+            return f"{title} (상세 내용 확인 필요)"
+
     except Exception as e:
-        print(f"⚠️ 개별 요약 실패: {e}")
-        return "내용을 분석할 수 없습니다."
+        print(f"⚠️ AI 호출 에러: {e}")
+        # AI가 실패하면 그냥 제목이라도 깔끔하게 반환 (분석 불가 메시지 제거)
+        return f"주요 뉴스: {title}"
 
 def generate_trend_analysis(news_data_list):
     try:
@@ -200,50 +223,45 @@ def scrape_and_process():
         processed_list = []
         new_count = 0
         
-        # 최대 10개까지만 처리
         target_items = items[:10]
         
         for item in target_items:
             title = item.title.text
             link = item.link.text
-            raw_desc = item.description.text if item.description else ""
             
-            # 태그 제거
+            # description 처리 강화
+            raw_desc = item.description.text if item.description else ""
             soup_desc = BeautifulSoup(raw_desc, "html.parser")
             cleaned_text = soup_desc.get_text(separator=" ", strip=True)
             
-            # 리스트에 추가 (분석용)
+            # [핵심 수정] 내용이 너무 짧으면 제목을 내용으로 간주 (구글 뉴스는 본문이 없는 경우가 많음)
+            if len(cleaned_text) < 10:
+                context = f"기사 제목: {title}. (본문 미리보기가 제공되지 않는 기사입니다.)"
+            else:
+                context = cleaned_text
+
             processed_list.append({'title': title}) 
 
-            # DB 중복 체크
             if is_link_exist(link):
                 print(f"PASS (중복): {title[:10]}...")
                 continue 
 
-            # AI 요약
-            context = cleaned_text if len(cleaned_text) > 10 else f"본문 내용 없음. 제목({title}) 기반으로 분석 필요."
+            # 요약 함수 호출
             summary = summarize_news_with_ai(title, context)
             
-            # DB 저장
             save_news(title, link, summary)
             new_count += 1
             
             print(f"✅ DB 저장 완료: {title[:10]}...")
             time.sleep(1)
 
-        # -----------------------------------------------------
-        # [핵심] 종합 브리핑 구독자 전체 발송
-        # -----------------------------------------------------
         if processed_list:
             print(f"📊 총 {len(processed_list)}건의 뉴스로 트렌드 분석 중...")
             trend_report = generate_trend_analysis(processed_list)
             
-            # 파일 저장
             with open(TREND_FILE, "w", encoding="utf-8") as f:
                 f.write(trend_report)
             
-            # 텔레그램 전송 (구독자 전원에게)
-            # [수정됨: 괄호 닫기 완료]
             send_telegram_to_all(trend_report)
             print("📨 텔레그램 종합 브리핑 전송 완료")
         else:
@@ -253,7 +271,6 @@ def scrape_and_process():
     except Exception as e:
         print(f"❌ 전체 프로세스 에러: {e}")
         return 0
-
 # ---------------------------------------------------------
 # API 엔드포인트
 # ---------------------------------------------------------
